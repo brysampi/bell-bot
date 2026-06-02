@@ -7,22 +7,22 @@ const commands = [
         .setName('kingina')
         .setDescription('King ina mo din')
         .toJSON(),
-    // new SlashCommandBuilder()
-    //     .setName('invite')
-    //     .setDescription('Invite players via code')
-    //     .addStringOption(option =>
-    //         option
-    //             .setName('code')
-    //             .setDescription('Code')
-    //             .setRequired(true)
-    //     )
-    //     .addRoleOption(option =>
-    //         option
-    //             .setName('role')
-    //             .setDescription('Role')
-    //             .setRequired(true)
-    //     )
-    //     .toJSON(),
+    new SlashCommandBuilder()
+        .setName('invite')
+        .setDescription('Invite players via code')
+        .addStringOption(option =>
+            option
+                .setName('code')
+                .setDescription('Code')
+                .setRequired(true)
+        )
+        .addRoleOption(option =>
+            option
+                .setName('role')
+                .setDescription('Role')
+                .setRequired(true)
+        )
+        .toJSON(),
     new SlashCommandBuilder()
         .setName('pabuhat')
         .setDescription('@someone to carry you')

@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const client = new Client({
     intents: [
@@ -45,19 +45,53 @@ client.on('messageCreate', async (message) => {
 });
 client.on('interactionCreate', async (interaction) => {
     try {
+        // Handle button interactions
+        if (interaction.isButton()) {
+            if (interaction.customId === 'invite_getcode') {
+                const code = inviteData.get(interaction.message.id);
+                if (code) {
+                    await interaction.reply({
+                        content: `🔑 Your invite code: **${code.code}**`,
+                        ephemeral: true
+                    });
+                } else {
+                    await interaction.reply({
+                        content: '❌ No code found for this invite',
+                        ephemeral: true
+                    });
+                }
+            }
+            return;
+        }
+
         if (!interaction.isChatInputCommand()) return;
         if (interaction.commandName === 'invite') {
             const code = interaction.options.getString('code');
             const role = interaction.options.getRole('role');
 
+            // Create join button
+            const button = new ButtonBuilder()
+                .setCustomId('invite_getcode')
+                .setLabel('get code')
+                .setStyle(ButtonStyle.Primary);
+
+            const row = new ActionRowBuilder()
+                .addComponents(button);
+
             // Reply and fetch the sent message so we can store its id
-            const msg = await interaction.reply({
-                content: `React on this message to get your invite code 🔑 (role: <@&${role.id}>)`,
+            // const msg = await interaction.reply({
+            //     content: `<@&${role.id}> get your invite code 🔑`,
+            //     components: [row],
+            //     fetchReply: true
+            // });
+            const msg = await interaction.channel.send({
+                content: `<@&${role.id}> get your invite code 🔑`,
+                components: [row],
                 fetchReply: true
             });
 
             // SAVE CODE AND ROLE WITH MESSAGE ID
-            inviteData.set(msg.id, code);
+            inviteData.set(msg.id, { code });
         }
         if (interaction.commandName === 'pabuhat') {
             const target = interaction.options.getUser('mention');
@@ -113,7 +147,7 @@ client.on('interactionCreate', async (interaction) => {
 
             await interaction.deleteReply();
         }
-        if(interaction.commandName === 'annonimous') {
+        if (interaction.commandName === 'annonimous') {
             const message = interaction.options.getString('annonimousmessage');
             const user = interaction.options.getUser('user');
             await interaction.deferReply({ ephemeral: true });
@@ -127,48 +161,52 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// client.on('messageReactionAdd', async (reaction, user) => {
-//     try {
-//         if (user.bot) return;
+client.on('messageReactionAdd', async (reaction, user) => {
+    try {
+        if (user.bot) return;
+        const message = reaction.message;
+        const code = inviteData.get(message.id);
+        if (!code) return;
 
-//         // fetch partials if needed
-//         if (reaction.partial) await reaction.fetch();
-//         if (reaction.message.partial) await reaction.message.fetch();
+        // ------------------------------------------------------------------------------
+        // // fetch partials if needed
+        // if (reaction.partial) await reaction.fetch();
+        // if (reaction.message.partial) await reaction.message.fetch();
 
-//         const message = reaction.message;
-//         const guild = message.guild;
+        // const message = reaction.message;
+        // const guild = message.guild;
 
-//         const data = inviteData.get(message.id);
-//         if (!data) return;
+        // const data = inviteData.get(message.id);
+        // if (!data) return;
 
-//         let thread = inviteThreads.get(message.id);
-//         console.log('threads  '+thread);
-//         // If thread already exists → reuse it
-//         if (!thread) {
-//             thread = await message.channel.threads.create({
-//                 name: `invite-${message.id}`,
-//                 autoArchiveDuration: 1,
-//                 reason: 'Invite system thread'
-//             });
+        // let thread = inviteThreads.get(message.id);
+        // console.log('threads  '+thread);
+        // // If thread already exists → reuse it
+        // if (!thread) {
+        //     thread = await message.channel.threads.create({
+        //         name: `invite-${message.id}`,
+        //         autoArchiveDuration: 1,
+        //         reason: 'Invite system thread'
+        //     });
 
-//             inviteThreads.set(message.id, thread);
-//         }
+        //     inviteThreads.set(message.id, thread);
+        // }
 
-//         // Add user if not already inside
-//         try {
-//             await thread.members.add(user.id);
-//         } catch (err) {
-//             // user might already be in thread → ignore error
-//         }
+        // // Add user if not already inside
+        // try {
+        //     await thread.members.add(user.id);
+        // } catch (err) {
+        //     // user might already be in thread → ignore error
+        // }
 
-//         const member = await guild.members.fetch(user.id);
+        // const member = await guild.members.fetch(user.id);
 
-//         // send message only in thread
-//         await thread.send(
-//             `👋 <@${user.id}> joined\n🔑 Code: **${data.code}**\n🎉>`
-//         );
-//     } catch (err) {
-//         console.error('Error handling reaction add:', err);
-//     }
-// });
+        // // send message only in thread
+        // await thread.send(
+        //     `👋 <@${user.id}> joined\n🔑 Code: **${data.code}**\n🎉>`
+        // );
+    } catch (err) {
+        console.error('Error handling reaction add:', err);
+    }
+});
 client.login(process.env.DISCORD_TOKEN);
