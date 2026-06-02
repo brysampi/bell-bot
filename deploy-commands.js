@@ -8,6 +8,14 @@ const commands = [
         .setDescription('King ina mo din')
         .toJSON(),
     new SlashCommandBuilder()
+        .setName('jointts')
+        .setDescription('Join TTS channel')
+        .toJSON(),
+    new SlashCommandBuilder()
+        .setName('leavetts')
+        .setDescription('Leave TTS channel')
+        .toJSON(),
+    new SlashCommandBuilder()
         .setName('invite')
         .setDescription('Invite players via code')
         .addStringOption(option =>

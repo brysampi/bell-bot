@@ -12,8 +12,60 @@ const client = new Client({
     partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User]
 });
 
+const {
+    joinVoiceChannel,
+    createAudioPlayer,
+    createAudioResource,
+    AudioPlayerStatus,
+    StreamType
+} = require("@discordjs/voice");
+const generateTTS = require("./tts");
+const ffmpegPath = require("ffmpeg-static");
+process.env.FFMPEG_PATH = ffmpegPath;
+
+const SUPPORTED_VOICES = new Set([
+    "angelo PH",
+    "danica PH",
+    "james PH",
+    "raphael PH",
+    "aria US",
+    "guy US",
+    "alloy US",
+    "nanami JP",
+    "keita JP",
+    "haruka JP",
+    "mai JP",
+    "ichiro JP",
+    "japanese JP",
+    "jp"
+]);
+
+function playAudio(connection, filePath) {
+    const player = createAudioPlayer();
+    const resource = createAudioResource(filePath, { inputType: StreamType.Arbitrary });
+
+    player.play(resource);
+    connection.subscribe(player);
+
+    player.on(AudioPlayerStatus.Playing, () => {
+        console.log('TTS audio playing');
+    });
+    player.on('error', error => {
+        console.error('Audio player error:', error);
+    });
+    connection.on('error', error => {
+        console.error('Voice connection error:', error);
+    });
+
+    player.on(AudioPlayerStatus.Idle, () => {
+        player.stop();
+    });
+}
+
 const inviteData = new Map();
 const inviteThreads = new Map();
+// channelId -> { connection, voiceChannelId, guildId, adapterCreator, voice }
+const channelTTS = new Map();
 
 client.once('ready', () => {
     console.log(`Logged in as ${client.user.tag}`);
@@ -41,6 +93,69 @@ client.on('messageCreate', async (message) => {
             // message.reply(`<@${user.id}> Hanap kana ni ${message.author} buhatin mo na daw sya`)
 
         });
+    }
+
+    // If this channel is enabled for auto-TTS, convert chat messages to speech
+    try {
+        const ttsConfig = channelTTS.get(message.channel.id);
+        if (ttsConfig && !message.author.bot) {
+            const textToSpeak = message.content.trim();
+            if (textToSpeak.length > 0) {
+                // ensure connection exists
+                let connection = ttsConfig.connection;
+                if (!connection) {
+                    connection = joinVoiceChannel({
+                        channelId: ttsConfig.voiceChannelId,
+                        guildId: ttsConfig.guildId,
+                        adapterCreator: ttsConfig.adapterCreator
+                    });
+                    ttsConfig.connection = connection;
+                    channelTTS.set(message.channel.id, ttsConfig);
+                }
+
+                await generateTTS(textToSpeak, ttsConfig.voice);
+                playAudio(connection, "./tts.mp3");
+            }
+            return; // don't process other tts commands for this message
+        }
+    } catch (err) {
+        console.error('Auto-TTS error:', err);
+    }
+
+    if (message.content.startsWith('b!tts ') || message.content.startsWith('tts ')) {
+        const command = message.content.startsWith('b!tts ')
+            ? message.content.slice(5)
+            : message.content.slice(4);
+        const args = command.trim().split(/\s+/);
+        let voice = null;
+
+        if (args.length > 1 && SUPPORTED_VOICES.has(args[0].toLowerCase())) {
+            voice = args.shift().toLowerCase();
+        }
+
+        const text = args.join(" ").trim();
+        if (!text) return message.reply("Give me text!");
+
+        const voiceChannel = message.member.voice.channel;
+        if (!voiceChannel) return message.reply("Join a voice channel first!");
+
+        try {
+            const connection = joinVoiceChannel({
+                channelId: voiceChannel.id,
+                guildId: voiceChannel.guild.id,
+                adapterCreator: voiceChannel.guild.voiceAdapterCreator
+            });
+
+            // 1. generate speech using Python
+            await generateTTS(text, voice);
+
+            // 2. play the mp3 file
+            playAudio(connection, "./tts.mp3");
+
+        } catch (error) {
+            console.error("TTS Error:", error);
+            message.reply("Sorry, something went wrong with TTS.");
+        }
     }
 });
 client.on('interactionCreate', async (interaction) => {
@@ -155,6 +270,67 @@ client.on('interactionCreate', async (interaction) => {
             const messageFinal = userMention ? `To: **${userMention}**\n||${message}||` : `||${message}||`;
             await interaction.channel.send({ content: `*Annonimous message incomming* \n >>> ${messageFinal}` });
             await interaction.deleteReply();
+        }
+        if (interaction.commandName === 'jointts') {
+            const voiceChannel = interaction.member.voice.channel;
+            if (!voiceChannel) return interaction.reply({ content: 'Join a voice channel first!', ephemeral: true });
+
+            // optional voice option from the slash command
+            const voiceOpt = interaction.options?.getString ? interaction.options.getString('voice') : null;
+
+            await interaction.deferReply({ ephemeral: true });
+            try {
+                const connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: voiceChannel.guild.id,
+                    adapterCreator: voiceChannel.guild.voiceAdapterCreator
+                });
+
+                // save mapping for this text channel
+                channelTTS.set(interaction.channel.id, {
+                    connection,
+                    voiceChannelId: voiceChannel.id,
+                    guildId: voiceChannel.guild.id,
+                    adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+                    voice: voiceOpt || null
+                });
+                try {
+                    const radomGreetings = [
+                        'Pakyu kayong lahat, Simulan na natin!',
+                        'King ina nyo, Simulan na natin, LezzGo!',
+                        'Mga putapete, Pakyu kayong lahat, G na to!',
+                        'Hello mga bata, Simulan na natin, Pakyu kayong lahat!',
+                        'Oye mga putapete, Simulan na natin, Pakyu kayong lahat!',
+                        'Pakyu kayong lahat, Simulan na natin, LezzGo!',
+                    ];
+                    const randomText = radomGreetings[Math.floor(Math.random() * radomGreetings.length)];
+                    await generateTTS(randomText, voiceOpt || null);
+                    playAudio(connection, "./tts.mp3");
+                } catch (err) {
+                    console.error('Error speaking join message:', err);
+                }
+
+                await interaction.editReply({ content: `Joined ${voiceChannel.name} and enabled TTS for this channel.` });
+            } catch (err) {
+                console.error('jointts error:', err);
+                await interaction.editReply({ content: 'Failed to join voice channel for TTS.' });
+            }
+        }
+
+        if (interaction.commandName === 'leavetts') {
+            await interaction.deferReply({ ephemeral: true });
+            const cfg = channelTTS.get(interaction.channel.id);
+            if (!cfg) {
+                await interaction.editReply({ content: 'This channel is not enabled for TTS.' });
+            } else {
+                try {
+                    if (cfg.connection && typeof cfg.connection.destroy === 'function') cfg.connection.destroy();
+                } catch (err) {
+                    console.error('Error destroying connection:', err);
+                }
+                channelTTS.delete(interaction.channel.id);
+                await interaction.editReply({ content: 'Disabled TTS and left the voice channel.' });
+            }
         }
     } catch (error) {
         console.error('Interaction error:', error);
