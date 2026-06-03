@@ -272,20 +272,49 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.deleteReply();
         }
         if (interaction.commandName === 'jointts') {
+            // ensure member context exists
+            if (!interaction.member) {
+                return interaction.reply({ content: 'Could not get member information.', ephemeral: true });
+            }
+
             const voiceChannel = interaction.member.voice.channel;
             if (!voiceChannel) return interaction.reply({ content: 'Join a voice channel first!', ephemeral: true });
+
+            // check if guild exists and bot is in it with voice adapter
+            if (!interaction.guild || !interaction.guild.voiceAdapterCreator) {
+                return interaction.reply({ content: 'Bot is not in this server! Please invite the bot first.', ephemeral: true });
+            }
 
             // optional voice option from the slash command
             const voiceOpt = interaction.options?.getString ? interaction.options.getString('voice') : null;
 
             await interaction.deferReply({ ephemeral: true });
             try {
+                const radomGreetings = [
+                    'Narito na ang inyong tagapagligtas! Bell-Bot is here to save the day!',
+                    'Magbigay-daan, dumating na ang hari ng bot!',
+                    'Tumabi kayo, may dumating na pogi',
+                    'Breaking news: Dumating na ako!',
+                    'Attention everyone, Bell-Bot has entered the building!',
+                    'Ladies and gentlemen, please welcome the one and only Bell-Bot!',
+                    'Hold on to your seats, Bell-Bot is here to take over!',
+                    'Naka-check in na ang pangunahing karakter.',
+                    'Bell-Bot has arrived, let the fun begin!',
+                    'Ayan na, nasa eksena na ako.',
+                    'Nagpakita na ang main character.',
+                    'Loading complete. Dumating na ako.',
+                    'Magsiyuko kayo, sapagkat narito na ako.',
+                    'Sa wakas, pinagpala na kayo ng aking presensya.'
+                ];
+                const randomText = radomGreetings[Math.floor(Math.random() * radomGreetings.length)];
+                await generateTTS(randomText, voiceOpt || null);
+
+
                 const connection = joinVoiceChannel({
                     channelId: voiceChannel.id,
                     guildId: voiceChannel.guild.id,
                     adapterCreator: voiceChannel.guild.voiceAdapterCreator
                 });
-
                 // save mapping for this text channel
                 channelTTS.set(interaction.channel.id, {
                     connection,
@@ -294,22 +323,17 @@ client.on('interactionCreate', async (interaction) => {
                     adapterCreator: voiceChannel.guild.voiceAdapterCreator,
                     voice: voiceOpt || null
                 });
-                try {
-                    const radomGreetings = [
-                        'Pakyu kayong lahat, Simulan na natin!',
-                        'King ina nyo, Simulan na natin, LezzGo!',
-                        'Mga putapete, Pakyu kayong lahat, G na to!',
-                        'Hello mga bata, Simulan na natin, Pakyu kayong lahat!',
-                        'Oye mga putapete, Simulan na natin, Pakyu kayong lahat!',
-                        'Pakyu kayong lahat, Simulan na natin, LezzGo!',
-                    ];
-                    const randomText = radomGreetings[Math.floor(Math.random() * radomGreetings.length)];
-                    await generateTTS(randomText, voiceOpt || null);
-                    playAudio(connection, "./tts.mp3");
-                } catch (err) {
-                    console.error('Error speaking join message:', err);
-                }
+                // try {
+                // const radomGreetings = [
+                //     'Pakyu kayong lahat, Simulan na natin!',
+                //     'King ina nyo, Simulan na natin, LezzGo!',
+                //     'Mga putapete, Pakyu kayong lahat, G na to!',
+                //     'Hello mga bata, Simulan na natin, Pakyu kayong lahat!',
+                //     'Oye mga putapete, Simulan na natin, Pakyu kayong lahat!',
+                //     'Pakyu kayong lahat, Simulan na natin, LezzGo!',
+                // ];
 
+                playAudio(connection, "./tts.mp3");
                 await interaction.editReply({ content: `Joined ${voiceChannel.name} and enabled TTS for this channel.` });
             } catch (err) {
                 console.error('jointts error:', err);
@@ -328,6 +352,36 @@ client.on('interactionCreate', async (interaction) => {
                 } catch (err) {
                     console.error('Error destroying connection:', err);
                 }
+                // optional voice option from the slash command
+                const voiceOpt = interaction.options?.getString ? interaction.options.getString('voice') : null;
+
+                // await interaction.deferReply({ ephemeral: true });
+                const radomGreetings = [
+                    'Paalam hangang sa muli, Bell-Bot signing off!',
+                    'Salamat sa pagsama sa akin, Bell-Bot is leaving the stage!',
+                    'Hasta la vista, Bell-Bot is out of here!',
+                    'Goodbye everyone, Bell-Bot is signing out!',
+                    'Bell-Bot is taking a break, see you all later!',
+                    'It’s not goodbye, it’s see you later! Bell-Bot is leaving for now.',
+                ];
+                const randomText = radomGreetings[Math.floor(Math.random() * radomGreetings.length)];
+                await generateTTS(randomText, voiceOpt || null);
+
+
+                const connection = joinVoiceChannel({
+                    channelId: interaction.voiceChannel.id,
+                    guildId: interaction.voiceChannel.guild.id,
+                    adapterCreator: interaction.voiceChannel.guild.voiceAdapterCreator
+                });
+                // save mapping for this text channel
+                channelTTS.set(interaction.channel.id, {
+                    connection,
+                    voiceChannelId: interaction.voiceChannel.id,
+                    guildId: interaction.voiceChannel.guild.id,
+                    adapterCreator: interaction.voiceChannel.guild.voiceAdapterCreator,
+                    voice: voiceOpt || null
+                });
+                playAudio(connection, "./tts.mp3");
                 channelTTS.delete(interaction.channel.id);
                 await interaction.editReply({ content: 'Disabled TTS and left the voice channel.' });
             }
