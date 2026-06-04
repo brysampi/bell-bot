@@ -1,5 +1,6 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
+const fs = require('fs');
 
 const client = new Client({
     intents: [
@@ -17,57 +18,99 @@ const {
     createAudioPlayer,
     createAudioResource,
     AudioPlayerStatus,
-    StreamType
+    StreamType,
+    VoiceConnectionStatus
 } = require("@discordjs/voice");
 const generateTTS = require("./tts");
 const ffmpegPath = require("ffmpeg-static");
 process.env.FFMPEG_PATH = ffmpegPath;
 
-const SUPPORTED_VOICES = new Set([
-    "angelo PH",
-    "danica PH",
-    "james PH",
-    "raphael PH",
-    "aria US",
-    "guy US",
-    "alloy US",
-    "nanami JP",
-    "keita JP",
-    "haruka JP",
-    "mai JP",
-    "ichiro JP",
-    "japanese JP",
-    "jp"
-]);
+// Map to handle queues per guild: GuildID -> { queue: [], player: AudioPlayer }
+const audioQueues = new Map();
 
-function playAudio(connection, filePath) {
-    const player = createAudioPlayer();
-    const resource = createAudioResource(filePath, { inputType: StreamType.Arbitrary });
+function getGuildQueue(guildId, connection) {
+    if (!audioQueues.has(guildId)) {
+        const player = createAudioPlayer();
+        connection.subscribe(player);
+        
+        const queueData = { queue: [], player: player, currentFile: null, voiceConnection: connection };
+        
+        player.on(AudioPlayerStatus.Idle, () => {
+            const lastFile = queueData.currentFile;
+            if (lastFile && fs.existsSync(lastFile)) {
+                try { fs.unlinkSync(lastFile); } catch (e) { console.error(`Cleanup error for ${lastFile}:`, e); }
+            }
+            queueData.currentFile = null;
+            playNext(guildId);
+        });
 
-    player.play(resource);
-    connection.subscribe(player);
+        player.on('error', error => {
+            console.error('Audio player error:', error);
+            const lastFile = queueData.currentFile;
+            if (lastFile && fs.existsSync(lastFile)) {
+                try { fs.unlinkSync(lastFile); } catch (e) { console.error(`Cleanup error for ${lastFile} on player error:`, e); }
+            }
+            queueData.currentFile = null;
+            playNext(guildId);
+        });
 
-    player.on(AudioPlayerStatus.Playing, () => {
-        console.log('TTS audio playing');
-    });
-    player.on('error', error => {
-        console.error('Audio player error:', error);
-    });
-    connection.on('error', error => {
-        console.error('Voice connection error:', error);
-    });
-
-    player.on(AudioPlayerStatus.Idle, () => {
-        player.stop();
-    });
+        audioQueues.set(guildId, queueData);
+    }
+    return audioQueues.get(guildId);
 }
+
+async function playNext(guildId) {
+    const queueData = audioQueues.get(guildId);
+    if (!queueData || queueData.queue.length === 0 || queueData.player.state.status !== AudioPlayerStatus.Idle) return;
+
+    const nextFile = queueData.queue.shift();
+    queueData.currentFile = nextFile;
+    
+    try {
+        const resource = createAudioResource(nextFile, { inputType: StreamType.Arbitrary });
+        queueData.player.play(resource);
+        console.log(`Playing: ${nextFile}`);
+    } catch (err) {
+        console.error("Play error:", err);
+        playNext(guildId);
+    }
+}
+
+function playAudio(connection, filePath, guildId) {
+    const queueData = getGuildQueue(guildId, connection);
+    queueData.queue.push(filePath);
+    if (queueData.player.state.status === AudioPlayerStatus.Idle) {
+        playNext(guildId);
+    }
+}
+
+function stopAndClearGuildAudio(guildId) {
+    const queueData = audioQueues.get(guildId);
+    if (queueData) {
+        queueData.player.stop();
+        queueData.queue = [];
+        if (queueData.currentFile && fs.existsSync(queueData.currentFile)) {
+            try { fs.unlinkSync(queueData.currentFile); } catch (e) { console.error(`Cleanup error for ${queueData.currentFile}:`, e); }
+        }
+        queueData.voiceConnection.destroy();
+        audioQueues.delete(guildId);
+    }
+}
+
+const SUPPORTED_VOICES = new Set([
+    "angelo PH", "danica PH", "james PH", "raphael PH",
+    "aria US", "guy US", "alloy US", "nanami JP",
+    "keita JP", "haruka JP", "mai JP", "ichiro JP",
+    "japanese JP", "jp"
+].map(v => v.toLowerCase()));
 
 const inviteData = new Map();
 const inviteThreads = new Map();
 // channelId -> { connection, voiceChannelId, guildId, adapterCreator, voice }
 const channelTTS = new Map();
+const spamMention = new Map();
 
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`Logged in as ${client.user.tag}`);
 });
 
@@ -99,22 +142,25 @@ client.on('messageCreate', async (message) => {
     try {
         const ttsConfig = channelTTS.get(message.channel.id);
         if (ttsConfig && !message.author.bot) {
-            const textToSpeak = message.content.trim();
+            if (message.author.id === client.user.id) return; // Ignore bot's own messages
+            // If you want to ignore a specific user, do it once:
+            // if (message.author.id === '397993062598574081') return;
+
+            const textToSpeak = `sabi ni ${message.member.displayName}, ${message.content.trim()}`;
+            
             if (textToSpeak.length > 0) {
-                // ensure connection exists
-                let connection = ttsConfig.connection;
-                if (!connection) {
-                    connection = joinVoiceChannel({
+                const guildId = message.guild.id;
+                const queueData = getGuildQueue(guildId, null); // Get existing queue data, connection will be updated if needed
+                if (!queueData.voiceConnection || queueData.voiceConnection.state.status === VoiceConnectionStatus.Disconnected) {
+                    queueData.voiceConnection = joinVoiceChannel({
                         channelId: ttsConfig.voiceChannelId,
-                        guildId: ttsConfig.guildId,
-                        adapterCreator: ttsConfig.adapterCreator
+                        guildId: guildId,
+                        adapterCreator: message.guild.voiceAdapterCreator
                     });
-                    ttsConfig.connection = connection;
-                    channelTTS.set(message.channel.id, ttsConfig);
                 }
 
-                await generateTTS(textToSpeak, ttsConfig.voice);
-                playAudio(connection, "./tts.mp3");
+                const filePath = await generateTTS(textToSpeak, ttsConfig.voice);
+                playAudio(queueData.voiceConnection, filePath, guildId);
             }
             return; // don't process other tts commands for this message
         }
@@ -140,17 +186,15 @@ client.on('messageCreate', async (message) => {
         if (!voiceChannel) return message.reply("Join a voice channel first!");
 
         try {
-            const connection = joinVoiceChannel({
+            const guildId = message.guild.id;
+            const connection = joinVoiceChannel({ // This will create or reuse a connection
                 channelId: voiceChannel.id,
                 guildId: voiceChannel.guild.id,
                 adapterCreator: voiceChannel.guild.voiceAdapterCreator
             });
 
-            // 1. generate speech using Python
-            await generateTTS(text, voice);
-
-            // 2. play the mp3 file
-            playAudio(connection, "./tts.mp3");
+            const filePath = await generateTTS(text, voice);
+            playAudio(connection, filePath, guildId);
 
         } catch (error) {
             console.error("TTS Error:", error);
@@ -167,12 +211,12 @@ client.on('interactionCreate', async (interaction) => {
                 if (code) {
                     await interaction.reply({
                         content: `🔑 Your invite code: **${code.code}**`,
-                        ephemeral: true
+                        flags: [MessageFlags.Ephemeral]
                     });
                 } else {
                     await interaction.reply({
                         content: '❌ No code found for this invite',
-                        ephemeral: true
+                        flags: [MessageFlags.Ephemeral]
                     });
                 }
             }
@@ -213,7 +257,7 @@ client.on('interactionCreate', async (interaction) => {
 
             // Acknowledge the interaction so it doesn't time out,
             // then send the actual message as a separate channel message.
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
             const responses = [
                 `<@${target.id}> Hanap kana ni ${interaction.user} buhatin mo na daw sya`,
@@ -233,7 +277,7 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.commandName === 'pabuhatrole') {
             const role = interaction.options.getRole('role');
             const code = interaction.options.getString('code');
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
             const roleMention = `<@&${role.id}>`;
             let responses = [];
@@ -265,30 +309,49 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.commandName === 'annonimous') {
             const message = interaction.options.getString('annonimousmessage');
             const user = interaction.options.getUser('user');
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
             const userMention = user ? `<@${user.id}>` : '';
             const messageFinal = userMention ? `To: **${userMention}**\n||${message}||` : `||${message}||`;
             await interaction.channel.send({ content: `*Annonimous message incomming* \n >>> ${messageFinal}` });
             await interaction.deleteReply();
         }
+        if (interaction.commandName === 'spammention') {
+            // return interaction.reply({ content: 'pumasok kaba?', ephemeral: true });
+            console.log('Spam mention command invoked');
+            const targetUser = interaction.options.getUser('spamuser');
+
+            if (!targetUser) {
+                return interaction.reply({ content: 'No user specified to mention.', flags: [MessageFlags.Ephemeral] });
+            }
+
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+            try {
+                // await targetUser.send(`You were mentioned by ${interaction.user.tag} using /spammention.`);
+                await targetUser.send(`Test DM lang to hindi to spam. Kalma lungs po`);
+                await interaction.editReply({ content: `✅ Sent a DM to ${targetUser.tag}.` });
+            } catch (sendError) {
+                console.error('Failed to DM user:', sendError);
+                await interaction.editReply({ content: `⚠️ Could not DM ${targetUser.tag}. They may have DMs disabled.` });
+            }
+        }
         if (interaction.commandName === 'jointts') {
             // ensure member context exists
             if (!interaction.member) {
-                return interaction.reply({ content: 'Could not get member information.', ephemeral: true });
+                return interaction.reply({ content: 'Could not get member information.', flags: [MessageFlags.Ephemeral] });
             }
 
             const voiceChannel = interaction.member.voice.channel;
-            if (!voiceChannel) return interaction.reply({ content: 'Join a voice channel first!', ephemeral: true });
+            if (!voiceChannel) return interaction.reply({ content: 'Join a voice channel first!', flags: [MessageFlags.Ephemeral] });
 
             // check if guild exists and bot is in it with voice adapter
             if (!interaction.guild || !interaction.guild.voiceAdapterCreator) {
-                return interaction.reply({ content: 'Bot is not in this server! Please invite the bot first.', ephemeral: true });
+                return interaction.reply({ content: 'Bot is not in this server! Please invite the bot first.', flags: [MessageFlags.Ephemeral] });
             }
 
             // optional voice option from the slash command
             const voiceOpt = interaction.options?.getString ? interaction.options.getString('voice') : null;
 
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
             try {
                 const radomGreetings = [
                     'Narito na ang inyong tagapagligtas! Bell-Bot is here to save the day!',
@@ -307,33 +370,23 @@ client.on('interactionCreate', async (interaction) => {
                     'Sa wakas, pinagpala na kayo ng aking presensya.'
                 ];
                 const randomText = radomGreetings[Math.floor(Math.random() * radomGreetings.length)];
-                await generateTTS(randomText, voiceOpt || null);
+                const filePath = await generateTTS(randomText, voiceOpt || null);
 
-
+                const guildId = interaction.guild.id;
                 const connection = joinVoiceChannel({
                     channelId: voiceChannel.id,
                     guildId: voiceChannel.guild.id,
                     adapterCreator: voiceChannel.guild.voiceAdapterCreator
                 });
+                getGuildQueue(guildId, connection); // Initialize queue for this guild with the new connection
                 // save mapping for this text channel
                 channelTTS.set(interaction.channel.id, {
-                    connection,
                     voiceChannelId: voiceChannel.id,
                     guildId: voiceChannel.guild.id,
                     adapterCreator: voiceChannel.guild.voiceAdapterCreator,
                     voice: voiceOpt || null
                 });
-                // try {
-                // const radomGreetings = [
-                //     'Pakyu kayong lahat, Simulan na natin!',
-                //     'King ina nyo, Simulan na natin, LezzGo!',
-                //     'Mga putapete, Pakyu kayong lahat, G na to!',
-                //     'Hello mga bata, Simulan na natin, Pakyu kayong lahat!',
-                //     'Oye mga putapete, Simulan na natin, Pakyu kayong lahat!',
-                //     'Pakyu kayong lahat, Simulan na natin, LezzGo!',
-                // ];
-
-                playAudio(connection, "./tts.mp3");
+                playAudio(connection, filePath, interaction.guild.id);
                 await interaction.editReply({ content: `Joined ${voiceChannel.name} and enabled TTS for this channel.` });
             } catch (err) {
                 console.error('jointts error:', err);
@@ -342,16 +395,11 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         if (interaction.commandName === 'leavetts') {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
             const cfg = channelTTS.get(interaction.channel.id);
             if (!cfg) {
                 await interaction.editReply({ content: 'This channel is not enabled for TTS.' });
             } else {
-                try {
-                    if (cfg.connection && typeof cfg.connection.destroy === 'function') cfg.connection.destroy();
-                } catch (err) {
-                    console.error('Error destroying connection:', err);
-                }
                 // optional voice option from the slash command
                 const voiceOpt = interaction.options?.getString ? interaction.options.getString('voice') : null;
 
@@ -365,23 +413,20 @@ client.on('interactionCreate', async (interaction) => {
                     'It’s not goodbye, it’s see you later! Bell-Bot is leaving for now.',
                 ];
                 const randomText = radomGreetings[Math.floor(Math.random() * radomGreetings.length)];
-                await generateTTS(randomText, voiceOpt || null);
+                const filePath = await generateTTS(randomText, voiceOpt || null);
 
-
-                const connection = joinVoiceChannel({
-                    channelId: interaction.voiceChannel.id,
-                    guildId: interaction.voiceChannel.guild.id,
-                    adapterCreator: interaction.voiceChannel.guild.voiceAdapterCreator
-                });
-                // save mapping for this text channel
-                channelTTS.set(interaction.channel.id, {
-                    connection,
-                    voiceChannelId: interaction.voiceChannel.id,
-                    guildId: interaction.voiceChannel.guild.id,
-                    adapterCreator: interaction.voiceChannel.guild.voiceAdapterCreator,
-                    voice: voiceOpt || null
-                });
-                playAudio(connection, "./tts.mp3");
+                const guildId = interaction.guild.id;
+                const queueData = audioQueues.get(guildId);
+                if (queueData && queueData.voiceConnection) {
+                    playAudio(queueData.voiceConnection, filePath, guildId);
+                    // Give a small delay for the farewell message to be queued before stopping
+                    setTimeout(() => {
+                        stopAndClearGuildAudio(guildId);
+                    }, 500); // Adjust delay as needed
+                } else {
+                    // If no active connection, just clear the channelTTS entry
+                    console.log("No active voice connection to play farewell, just leaving.");
+                }
                 channelTTS.delete(interaction.channel.id);
                 await interaction.editReply({ content: 'Disabled TTS and left the voice channel.' });
             }

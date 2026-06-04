@@ -71,6 +71,16 @@ const commands = [
                 .setRequired(false)
         )
         .toJSON(),
+    new SlashCommandBuilder()
+        .setName('spammention')
+        .setDescription('Spam mention a user until they response')
+        .addUserOption(option =>
+            option
+                .setName('spamuser')
+                .setDescription('User to mention')
+                .setRequired(true)
+        )
+        .toJSON(),
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
