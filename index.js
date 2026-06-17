@@ -235,34 +235,34 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         if (!interaction.isChatInputCommand()) return;
-        if (interaction.commandName === 'invite') {
-            const code = interaction.options.getString('code');
-            const role = interaction.options.getRole('role');
+        // if (interaction.commandName === 'invite') {
+        //     const code = interaction.options.getString('code');
+        //     const role = interaction.options.getRole('role');
 
-            // Create join button
-            const button = new ButtonBuilder()
-                .setCustomId('invite_getcode')
-                .setLabel('get code')
-                .setStyle(ButtonStyle.Primary);
+        //     // Create join button
+        //     const button = new ButtonBuilder()
+        //         .setCustomId('invite_getcode')
+        //         .setLabel('get code')
+        //         .setStyle(ButtonStyle.Primary);
 
-            const row = new ActionRowBuilder()
-                .addComponents(button);
+        //     const row = new ActionRowBuilder()
+        //         .addComponents(button);
 
-            // Reply and fetch the sent message so we can store its id
-            // const msg = await interaction.reply({
-            //     content: `<@&${role.id}> get your invite code 🔑`,
-            //     components: [row],
-            //     fetchReply: true
-            // });
-            const msg = await interaction.channel.send({
-                content: `<@&${role.id}> get your invite code 🔑`,
-                components: [row],
-                fetchReply: true
-            });
+        //     // Reply and fetch the sent message so we can store its id
+        //     // const msg = await interaction.reply({
+        //     //     content: `<@&${role.id}> get your invite code 🔑`,
+        //     //     components: [row],
+        //     //     fetchReply: true
+        //     // });
+        //     const msg = await interaction.channel.send({
+        //         content: `<@&${role.id}> get your invite code 🔑`,
+        //         components: [row],
+        //         fetchReply: true
+        //     });
 
-            // SAVE CODE AND ROLE WITH MESSAGE ID
-            inviteData.set(msg.id, { code });
-        }
+        //     // SAVE CODE AND ROLE WITH MESSAGE ID
+        //     inviteData.set(msg.id, { code });
+        // }
         if (interaction.commandName === 'pabuhat') {
             const target = interaction.options.getUser('mention');
 
@@ -403,6 +403,7 @@ client.on('interactionCreate', async (interaction) => {
                 console.error('jointts error:', err);
                 await interaction.editReply({ content: 'Failed to join voice channel for TTS.' });
             }
+                return;
         }
 
         if (interaction.commandName === 'leavetts') {
