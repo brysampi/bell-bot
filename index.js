@@ -2,11 +2,11 @@ const express = require("express");
 const app = express();
 
 app.get("/", (req, res) => {
-  res.send("Bot is online!");
+    res.send("Bot is online!");
 });
 
 app.listen(3000, () => {
-  console.log("Web server started");
+    console.log("Web server started");
 });
 
 require('dotenv').config();
@@ -43,9 +43,9 @@ function getGuildQueue(guildId, connection) {
     if (!audioQueues.has(guildId)) {
         const player = createAudioPlayer();
         connection.subscribe(player);
-        
+
         const queueData = { queue: [], player: player, currentFile: null, voiceConnection: connection };
-        
+
         player.on(AudioPlayerStatus.Idle, () => {
             const lastFile = queueData.currentFile;
             if (lastFile && fs.existsSync(lastFile)) {
@@ -76,7 +76,7 @@ async function playNext(guildId) {
 
     const nextFile = queueData.queue.shift();
     queueData.currentFile = nextFile;
-    
+
     try {
         const resource = createAudioResource(nextFile, { inputType: StreamType.Arbitrary });
         queueData.player.play(resource);
@@ -158,7 +158,7 @@ client.on('messageCreate', async (message) => {
             // if (message.author.id === '397993062598574081') return;
 
             const textToSpeak = `sabi ni ${message.member.displayName}, ${message.content.trim()}`;
-            
+
             if (textToSpeak.length > 0) {
                 const guildId = message.guild.id;
                 const queueData = getGuildQueue(guildId, null); // Get existing queue data, connection will be updated if needed
@@ -346,23 +346,25 @@ client.on('interactionCreate', async (interaction) => {
             }
         }
         if (interaction.commandName === 'jointts') {
+            // Acknowledge immediately — Discord gives us only 3 seconds before the token expires
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+
             // ensure member context exists
             if (!interaction.member) {
-                return interaction.reply({ content: 'Could not get member information.', flags: [MessageFlags.Ephemeral] });
+                return interaction.editReply({ content: 'Could not get member information.' });
             }
 
             const voiceChannel = interaction.member.voice.channel;
-            if (!voiceChannel) return interaction.reply({ content: 'Join a voice channel first!', flags: [MessageFlags.Ephemeral] });
+            if (!voiceChannel) return interaction.editReply({ content: 'Join a voice channel first!' });
 
             // check if guild exists and bot is in it with voice adapter
             if (!interaction.guild || !interaction.guild.voiceAdapterCreator) {
-                return interaction.reply({ content: 'Bot is not in this server! Please invite the bot first.', flags: [MessageFlags.Ephemeral] });
+                return interaction.editReply({ content: 'Bot is not in this server! Please invite the bot first.' });
             }
 
             // optional voice option from the slash command
             const voiceOpt = interaction.options?.getString ? interaction.options.getString('voice') : null;
 
-            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
             try {
                 const radomGreetings = [
                     'Narito na ang inyong tagapagligtas! Bell-Bot is here to save the day!',
@@ -403,7 +405,7 @@ client.on('interactionCreate', async (interaction) => {
                 console.error('jointts error:', err);
                 await interaction.editReply({ content: 'Failed to join voice channel for TTS.' });
             }
-                return;
+            return;
         }
 
         if (interaction.commandName === 'leavetts') {
@@ -497,3 +499,38 @@ client.on('messageReactionAdd', async (reaction, user) => {
     }
 });
 client.login(process.env.DISCORD_TOKEN);
+
+// ── Graceful shutdown: clean up temp TTS MP3 files on exit / crash ──────────
+function cleanupTempFiles() {
+    // Delete any in-use files tracked in the queue
+    for (const [, queueData] of audioQueues) {
+        if (queueData.currentFile && fs.existsSync(queueData.currentFile)) {
+            try { fs.unlinkSync(queueData.currentFile); } catch (_) { }
+        }
+        for (const file of queueData.queue) {
+            if (fs.existsSync(file)) {
+                try { fs.unlinkSync(file); } catch (_) { }
+            }
+        }
+        try { queueData.voiceConnection?.destroy(); } catch (_) { }
+    }
+
+    // Sweep the temp directory for any orphaned TTS files
+    try {
+        const ttsDir = require('path').join(require('os').tmpdir(), 'bell-bot-tts');
+        if (fs.existsSync(ttsDir)) {
+            const files = fs.readdirSync(ttsDir);
+            for (const file of files) {
+                try { fs.unlinkSync(require('path').join(ttsDir, file)); } catch (_) { }
+            }
+        }
+    } catch (_) { }
+}
+
+for (const signal of ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException']) {
+    process.on(signal, (errOrCode) => {
+        if (errOrCode instanceof Error) console.error('Uncaught exception:', errOrCode);
+        cleanupTempFiles();
+        if (signal !== 'exit') process.exit(0);
+    });
+}
