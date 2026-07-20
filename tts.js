@@ -30,11 +30,11 @@ const DEFAULT_VOICE = 'fil-PH-AngeloNeural';
  * @param {string} rate       - Speaking rate as SSML prosody value (e.g. "-10%").
  * @returns {Promise<string>} - Resolves with the absolute path to the generated MP3.
  */
-async function generateTTS(text, voice = null, rate = '-10%') {
+async function generateTTS(text, voice = null, rate = '-10%', guildId = 'global') {
     const voiceKey = (voice || '').toLowerCase().trim();
     const voiceName = VOICE_MAP[voiceKey] || DEFAULT_VOICE;
 
-    const fileName = `tts_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp3`;
+    const fileName = `tts_${guildId}_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp3`;
     const filePath = path.join(__dirname, fileName);
 
     const tts = new MsEdgeTTS();

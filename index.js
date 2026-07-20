@@ -39,10 +39,29 @@ process.env.FFMPEG_PATH = ffmpegPath;
 // Map to handle queues per guild: GuildID -> { queue: [], player: AudioPlayer }
 const audioQueues = new Map();
 
+function setupVoiceConnectionListeners(connection, guildId) {
+    if (!connection) return;
+
+    // Auto-cleanup when voice connection is disconnected (e.g. user kicks bot, or disconnects)
+    connection.on(VoiceConnectionStatus.Disconnected, () => {
+        console.log(`Voice connection disconnected in guild ${guildId}. Cleaning up audio files and queue.`);
+        stopAndClearGuildAudio(guildId);
+    });
+
+    // Handle connection errors gracefully to prevent uncaught exceptions from crashing the bot
+    connection.on('error', (err) => {
+        console.error(`Voice connection error in guild ${guildId}:`, err.message);
+        stopAndClearGuildAudio(guildId);
+    });
+}
+
 function getGuildQueue(guildId, connection) {
     if (!audioQueues.has(guildId)) {
         const player = createAudioPlayer();
-        connection.subscribe(player);
+        if (connection) {
+            connection.subscribe(player);
+            setupVoiceConnectionListeners(connection, guildId);
+        }
 
         const queueData = { queue: [], player: player, currentFile: null, voiceConnection: connection };
 
@@ -89,6 +108,11 @@ async function playNext(guildId) {
 
 function playAudio(connection, filePath, guildId) {
     const queueData = getGuildQueue(guildId, connection);
+    if (connection && queueData.voiceConnection !== connection) {
+        queueData.voiceConnection = connection;
+        connection.subscribe(queueData.player);
+        setupVoiceConnectionListeners(connection, guildId);
+    }
     queueData.queue.push(filePath);
     if (queueData.player.state.status === AudioPlayerStatus.Idle) {
         playNext(guildId);
@@ -96,14 +120,38 @@ function playAudio(connection, filePath, guildId) {
 }
 
 function stopAndClearGuildAudio(guildId) {
+    // 1. Remove all active auto-TTS text channel mappings for this guild so it doesn't join again
+    for (const [channelId, config] of channelTTS.entries()) {
+        if (config.guildId === guildId) {
+            channelTTS.delete(channelId);
+            console.log(`Removed auto-TTS configuration for text channel ${channelId}`);
+        }
+    }
+
     const queueData = audioQueues.get(guildId);
     if (queueData) {
         queueData.player.stop();
+
+        // 2. Delete all remaining queued files from disk
+        for (const file of queueData.queue) {
+            if (fs.existsSync(file)) {
+                try { fs.unlinkSync(file); } catch (e) { console.error(`Cleanup error for queued file ${file}:`, e); }
+            }
+        }
         queueData.queue = [];
+
+        // 3. Delete current active file from disk
         if (queueData.currentFile && fs.existsSync(queueData.currentFile)) {
             try { fs.unlinkSync(queueData.currentFile); } catch (e) { console.error(`Cleanup error for ${queueData.currentFile}:`, e); }
         }
-        queueData.voiceConnection.destroy();
+
+        // 4. Safely destroy voice connection
+        try {
+            if (queueData.voiceConnection && queueData.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed) {
+                queueData.voiceConnection.destroy();
+            }
+        } catch (e) {}
+
         audioQueues.delete(guildId);
     }
 }
@@ -170,7 +218,7 @@ client.on('messageCreate', async (message) => {
                     });
                 }
 
-                const filePath = await generateTTS(textToSpeak, ttsConfig.voice);
+                const filePath = await generateTTS(textToSpeak, ttsConfig.voice, '-10%', guildId);
                 playAudio(queueData.voiceConnection, filePath, guildId);
             }
             return; // don't process other tts commands for this message
@@ -196,6 +244,12 @@ client.on('messageCreate', async (message) => {
         const voiceChannel = message.member.voice.channel;
         if (!voiceChannel) return message.reply("Join a voice channel first!");
 
+        // Prevent joining if already in a different voice channel in this server
+        const botVoiceChannelId = message.guild.members.me.voice.channelId;
+        if (botVoiceChannelId && botVoiceChannelId !== voiceChannel.id) {
+            return message.reply("I am already in another voice channel on this server!");
+        }
+
         try {
             const guildId = message.guild.id;
             const connection = joinVoiceChannel({ // This will create or reuse a connection
@@ -204,7 +258,7 @@ client.on('messageCreate', async (message) => {
                 adapterCreator: voiceChannel.guild.voiceAdapterCreator
             });
 
-            const filePath = await generateTTS(text, voice);
+            const filePath = await generateTTS(text, voice, '-10%', guildId);
             playAudio(connection, filePath, guildId);
 
         } catch (error) {
@@ -347,19 +401,43 @@ client.on('interactionCreate', async (interaction) => {
         }
         if (interaction.commandName === 'jointts') {
             // Acknowledge immediately — Discord gives us only 3 seconds before the token expires
-            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+            try {
+                await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+            } catch (deferErr) {
+                console.warn('Warn: Failed to defer reply (likely acknowledged by another instance or expired):', deferErr.message);
+            }
 
             // ensure member context exists
             if (!interaction.member) {
-                return interaction.editReply({ content: 'Could not get member information.' });
+                try {
+                    await interaction.editReply({ content: 'Could not get member information.' });
+                } catch (_) {}
+                return;
             }
 
             const voiceChannel = interaction.member.voice.channel;
-            if (!voiceChannel) return interaction.editReply({ content: 'Join a voice channel first!' });
+            if (!voiceChannel) {
+                try {
+                    await interaction.editReply({ content: 'Join a voice channel first!' });
+                } catch (_) {}
+                return;
+            }
+
+            // Prevent joining if already in a different voice channel in this server
+            const botVoiceChannelId = interaction.guild.members.me.voice.channelId;
+            if (botVoiceChannelId && botVoiceChannelId !== voiceChannel.id) {
+                try {
+                    await interaction.editReply({ content: 'I am already in another voice channel on this server!' });
+                } catch (_) {}
+                return;
+            }
 
             // check if guild exists and bot is in it with voice adapter
             if (!interaction.guild || !interaction.guild.voiceAdapterCreator) {
-                return interaction.editReply({ content: 'Bot is not in this server! Please invite the bot first.' });
+                try {
+                    await interaction.editReply({ content: 'Bot is not in this server! Please invite the bot first.' });
+                } catch (_) {}
+                return;
             }
 
             // optional voice option from the slash command
@@ -400,19 +478,29 @@ client.on('interactionCreate', async (interaction) => {
                     voice: voiceOpt || null
                 });
                 playAudio(connection, filePath, interaction.guild.id);
-                await interaction.editReply({ content: `Joined ${voiceChannel.name} and enabled TTS for this channel.` });
+                try {
+                    await interaction.editReply({ content: `Joined ${voiceChannel.name} and enabled TTS for this channel.` });
+                } catch (_) {}
             } catch (err) {
                 console.error('jointts error:', err);
-                await interaction.editReply({ content: 'Failed to join voice channel for TTS.' });
+                try {
+                    await interaction.editReply({ content: 'Failed to join voice channel for TTS.' });
+                } catch (_) {}
             }
             return;
         }
 
         if (interaction.commandName === 'leavetts') {
-            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+            try {
+                await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+            } catch (deferErr) {
+                console.warn('Warn: Failed to defer reply in leavetts:', deferErr.message);
+            }
             const cfg = channelTTS.get(interaction.channel.id);
             if (!cfg) {
-                await interaction.editReply({ content: 'This channel is not enabled for TTS.' });
+                try {
+                    await interaction.editReply({ content: 'This channel is not enabled for TTS.' });
+                } catch (_) {}
             } else {
                 // optional voice option from the slash command
                 const voiceOpt = interaction.options?.getString ? interaction.options.getString('voice') : null;
@@ -442,7 +530,9 @@ client.on('interactionCreate', async (interaction) => {
                     console.log("No active voice connection to play farewell, just leaving.");
                 }
                 channelTTS.delete(interaction.channel.id);
-                await interaction.editReply({ content: 'Disabled TTS and left the voice channel.' });
+                try {
+                    await interaction.editReply({ content: 'Disabled TTS and left the voice channel.' });
+                } catch (_) {}
             }
         }
     } catch (error) {
