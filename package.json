@@ -21,6 +21,7 @@
   "homepage": "https://github.com/brysampi/bell-bot#readme",
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
+    "@google/genai": "^3.6.1",
     "discord.js": "^14.26.4",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

@@ -170,6 +170,7 @@ const channelTTS = new Map();
 const spamMention = new Map();
 
 const chatLogs = new Map();
+const { summarizeChat } = require("./gemini");
 
 client.once('clientReady', () => {
     console.log(`Logged in as ${client.user.tag}`);
@@ -199,6 +200,24 @@ client.on('messageCreate', async (message) => {
         console.log(chatLogs);
         message.reply(chatLogs.map(log => `[${log.username}] ${log.displayName}: ${log.content}`).join('\n'));
     }
+    if (message.content.startsWith('b!sums') && message.author.username === 'bell.v1') {
+
+        console.log('Summarizing chat...');
+        const chatLogs = [...messages.values()]
+            .reverse()
+            .filter(message => !message.author.bot && message.content.trim() !== 'b!sums')
+            .map(message => ({
+                username: message.author.username,
+                displayName: message.author.displayName,
+                content: message.content,
+                timestamp: message.createdAt.toISOString()
+            }));
+
+        const summary = await summarizeChat(chatLogs);
+        console.log(summary);
+        message.reply(summary);
+    }
+    
     // console.log(`[message] ${message.guild?.name || 'DM'} ${message.author.tag}: ${message.content}`);
 
     // if (message.content === 'porbs' ||
@@ -562,6 +581,29 @@ client.on('interactionCreate', async (interaction) => {
                 } catch (_) { }
             }
         }
+        if (interaction.commandName === 'summarize') {
+            try {
+                await interaction.deferReply();
+                const channel = interaction.channel;
+                const messages = await channel.messages.fetch({ limit: 50 });
+                const chatLogs = [...messages.values()]
+                    .reverse()
+                    .filter(message => !message.author.bot && message.content.trim() !== 'b!sums')
+                    .map(message => ({
+                        username: message.author.username,
+                        displayName: message.member ? message.member.displayName : message.author.username,
+                        content: message.content,
+                        timestamp: message.createdAt.toISOString()
+                    }));
+
+                const summary = await summarizeChat(chatLogs);
+                // const summary = chatLogs.map(log => `[${log.username}] ${log.displayName}: ${log.content}`).join('\n');
+                console.log(summary);
+                await interaction.editReply({ content: summary,ephemeral: false });
+            } catch (error) {
+                console.error('Interaction error:', error);
+            }
+        }
     } catch (error) {
         console.error('Interaction error:', error);
     }
@@ -615,7 +657,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
         console.error('Error handling reaction add:', err);
     }
 });
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN_BB);
 
 // ── Graceful shutdown: clean up temp TTS MP3 files on exit / crash ──────────
 function cleanupTempFiles() {

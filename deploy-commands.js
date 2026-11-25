@@ -15,6 +15,10 @@ const commands = [
         .setName('leavetts')
         .setDescription('Leave TTS channel')
         .toJSON(),
+    new SlashCommandBuilder()
+        .setName('summarize')
+        .setDescription('Summarize last 20 chat in history')
+        .toJSON(),
     // new SlashCommandBuilder()
     //     .setName('invite')
     //     .setDescription('Invite players via code')
@@ -83,14 +87,14 @@ const commands = [
     // .toJSON(),
 ];
 
-const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN_BB);
 
 (async () => {
     try {
         console.log('Registering slash commands...');
 
         await rest.put(
-            Routes.applicationCommands(process.env.DISCORD_CLIENT_ID),
+            Routes.applicationCommands(process.env.DISCORD_CLIENT_ID_CC),
             { body: commands }
         );
 

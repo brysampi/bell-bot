@@ -24,7 +24,7 @@
 | **Frameworks** | `discord.js` v14, `@discordjs/voice` |
 | **Libraries** | `express`, `dotenv`, `ffmpeg-static`, `msedge-tts` (Microsoft Edge Neural TTS) |
 | **Database** | *None* (in-memory maps) |
-| **Authentication** | Discord bot token (`DISCORD_TOKEN`) via env variable |
+| **Authentication** | Discord bot token (`DISCORD_TOKEN_BB`) via env variable |
 | **Infrastructure** | Runs on any Node host; includes a tiny Express server on port 3000 |
 | **Build Tools** | `npm` (script: `dev` -> `node index.js`) |
 | **Package Manager** | npm |
@@ -49,7 +49,7 @@
 │   tts.js              – wrapper for Node.js edge-tts generation
 │   deploy-commands.js  – slash-command definition & registration
 │   package.json        – project metadata & deps
-│   .env                – runtime secrets (DISCORD_TOKEN, CLIENT_ID)
+│   .env                – runtime secrets (DISCORD_TOKEN_BB, CLIENT_ID)
 │   test.js (placeholder) – future tests
 │   node_modules/       – installed packages (ignored)
 │   .git/               – VCS metadata (ignored)
@@ -97,7 +97,7 @@
 ---
 
 ## 8. Authentication & Authorization
-- **Auth Flow:** Bot token (`DISCORD_TOKEN`) loaded from `.env` -> `client.login()`.
+- **Auth Flow:** Bot token (`DISCORD_TOKEN_BB`) loaded from `.env` -> `client.login()`.
 - **Session:** Persistent while process runs; reconnection handled by `discord.js`.
 - **Roles/Permissions:** No per-guild permission checks; all users can invoke commands.
 - **Security Middleware:** None beyond token handling; keep `.env` out of repo.
@@ -117,7 +117,7 @@ All defined in `index.js` and imported where needed.
 ## 10. Configuration
 | File / Env Var | Meaning |
 |----------------|---------|
-| `.env` | `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` (required for bot & command registration). |
+| `.env` | `DISCORD_TOKEN_BB`, `DISCORD_CLIENT_ID_CC` (required for bot & command registration). |
 | `process.env.FFMPEG_PATH` | Set automatically to `ffmpeg-static` binary path for voice processing. |
 | `package.json` scripts | `"dev": "node index.js"` – start bot. |
 | Feature Flags | None currently. |
@@ -204,7 +204,7 @@ All defined in `index.js` and imported where needed.
 |--------|---------|
 | **Start Bot (dev)** | `npm run dev` (runs `node index.js`) |
 | **Register / Update Slash Commands** | `node deploy-commands.js` |
-| **Set Env Variables** | Create `.env` with `DISCORD_TOKEN` and `DISCORD_CLIENT_ID` |
+| **Set Env Variables** | Create `.env` with `DISCORD_TOKEN_BB` and `DISCORD_CLIENT_ID_CC` |
 | **Run Tests** | *(none yet)* |
 | **Lint** | *(not configured)* |
 | **Clean Temporary MP3s** | Handled automatically; can manually delete `*.mp3` files in repo root |
@@ -222,7 +222,7 @@ State is kept in several in-memory maps:
 - `channelTTS` – tracks which text channels have auto-TTS enabled and associated voice channel.
 - `inviteData`, `inviteThreads`, `spamMention` – caches for invite and spam features.
 
-Configuration is minimal: a `.env` file supplies `DISCORD_TOKEN` (bot authentication) and `DISCORD_CLIENT_ID` (command registration). `ffmpeg-static` provides the FFmpeg binary; its path is exported to `process.env.FFMPEG_PATH`. No persistent database is used.
+Configuration is minimal: a `.env` file supplies `DISCORD_TOKEN` (bot authentication) and `DISCORD_CLIENT_ID_CC` (command registration). `ffmpeg-static` provides the FFmpeg binary; its path is exported to `process.env.FFMPEG_PATH`. No persistent database is used.
 
 The code follows a straightforward pattern:
 1. **Receive event** -> validate -> (optional) generate TTS via `generateTTS` -> enqueue file in `audioQueues`.
