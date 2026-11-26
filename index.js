@@ -194,7 +194,7 @@ const channelTTS = new Map();
 const spamMention = new Map();
 
 const chatLogs = new Map();
-const { summarizeChat } = require("./gemini");
+const { summarizeChat,customPromptChat } = require("./gemini");
 
 client.once('clientReady', () => {
     console.log(`Logged in as ${client.user.tag}`);
@@ -678,6 +678,86 @@ client.on('interactionCreate', async (interaction) => {
 
 
                     const summary = await summarizeChat(chatLogs);
+                    console.log(summary);
+                    const filePath = await generateTTS(summary);
+                    const guildId = interaction.guild.id;
+                    const existingQueue = audioQueues.get(guildId);
+                    const connection = botVoiceChannelId === voiceChannel.id
+                        && existingQueue?.voiceConnection
+                        && existingQueue.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed
+                        ? existingQueue.voiceConnection
+                        : joinVoiceChannel({
+                            channelId: voiceChannel.id,
+                            guildId,
+                            adapterCreator: interaction.guild.voiceAdapterCreator
+                        });
+                    const queueData = getGuildQueue(guildId, connection);
+                    queueData.disconnectWhenIdle = true;
+                    await interaction.editReply({ content: `Summary audio queued in ${voiceChannel.name}.` });
+                    playAudio(connection, filePath, guildId);
+                    await interaction.editReply({ content: summary, ephemeral: false });
+
+                } catch (error) {
+                    console.error('Summarize TTS error:', error);
+                    try {
+                        if (interaction.deferred || interaction.replied) {
+                            await interaction.editReply({ content: 'Failed to summarize or play the audio.' });
+                        }
+                    } catch (replyError) {
+                        console.error('Failed to report summarize TTS error:', replyError);
+                    }
+                }
+            else {
+                await interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: false });
+            }
+        }
+        if (interaction.commandName === 'promptchat') {
+            if (interaction.user.username === 'bell.v1')
+                try {
+                    await interaction.deferReply();
+
+                    if (!interaction.guild || !interaction.guild.voiceAdapterCreator) {
+                        await interaction.editReply({ content: 'This command can only be used in a server.' });
+                        return;
+                    }
+
+                    // ensure member context exists
+                    if (!interaction.member) {
+                        await interaction.editReply({ content: 'Could not get member information.' });
+                        return;
+                    }
+
+                    const voiceChannel = interaction.member.voice.channel;
+                    if (!voiceChannel) {
+                        await interaction.editReply({ content: 'Join a voice channel first!' });
+                        return;
+                    }
+
+                    // Prevent joining if already in a different voice channel in this server
+                    const botVoiceChannelId = interaction.guild.members.me?.voice.channelId;
+                    if (botVoiceChannelId && botVoiceChannelId !== voiceChannel.id) {
+                        await interaction.editReply({ content: 'I am already in another voice channel on this server!' });
+                        return;
+                    }
+
+                    const channel = interaction.channel;
+                    const messages = await channel.messages.fetch({ limit: 50 });
+                    const chatLogs = [...messages.values()]
+                        .reverse()
+                        .filter(message => !message.author.bot && message.content.trim() !== 'b!sums')
+                        .map(message => ({
+                            username: message.author.username,
+                            displayName: message.member ? message.member.displayName : message.author.username,
+                            content: message.content,
+                            timestamp: message.createdAt.toISOString()
+                        }));
+
+
+                    // const role = interaction.options.getRole('role');
+                    const customPrompt = interaction.options.getString('chatPrompt');
+
+
+                    const summary = await customPromptChat(chatLogs, customPrompt);
                     console.log(summary);
                     const filePath = await generateTTS(summary);
                     const guildId = interaction.guild.id;

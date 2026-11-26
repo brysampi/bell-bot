@@ -69,14 +69,14 @@ async function summarizeChat(messages) {
     const chatHistory = messages.map(msg => {
         return `${msg.displayName || msg.username}: ${msg.content}`;
     }).join("\n");
-const pref_language = 'tagalog'
+    const pref_language = 'tagalog'
     const prompt = `You're a friendly Discord community assistant.
     Your job is to read the recent chat messages and explain what's been happening in a natural, easy-to-understand way and make it short.
 
 Imagine someone has been away from the server and wants to catch up on the conversation. Explain it to them like a friend would.
 
 What to include:
-Watch the language using in the chat use the same language and as much as possible id like it `+pref_language+` if not use english.
+Watch the language using in the chat use the same language and as much as possible id like it `+ pref_language + ` if not use english.
 Match the tone of the conversation. If it was casual, keep your summary casual. If it was serious, keep it serious .
 Main discussions: Mention the topics that came up and what people said about them.
 Important details: Highlight anything worth knowing, such as announcements, plans, news, or interesting information.
@@ -120,4 +120,43 @@ ${chatHistory}
     }
 }
 
-module.exports = { summarizeChat };
+async function customPromptChat(messages,customPrompt) {
+    if (!messages || messages.length === 0) {
+        return "There are no messages to summarize.";
+    }
+
+    // Format Discord messages
+    const chatHistory = messages.map(msg => {
+        return `${msg.displayName || msg.username}: ${msg.content}`;
+    }).join("\n");
+    const pref_language = 'tagalog'
+    const prompt = `You're a friendly Discord community assistant.
+    Your job is to `+customPrompt+` easy-to-understand way and make it short.
+
+    What to include:
+    Watch the language using in the chat use the same language and as much as possible id like it `+ pref_language + ` if not use english.
+    Match the tone of the conversation. If it was casual, keep your summary casual. If it was serious, keep it serious .
+
+    Discord conversation:
+    ${chatHistory}
+    `;
+
+    try {
+        console.log("Summarizing chat...");
+
+        const summary = await generateWithRetry(prompt);
+
+        console.log("Chat summarized successfully!");
+
+        return summary || "Gemini returned an empty summary.";
+
+    } catch (error) {
+        console.error("Gemini summarization failed:", error);
+
+        throw new Error(
+            "Unable to summarize chat right now. Please try again later."
+        );
+    }
+}
+
+module.exports = { summarizeChat, customPromptChat };

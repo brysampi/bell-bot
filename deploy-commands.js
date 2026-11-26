@@ -23,6 +23,15 @@ const commands = [
         .setName('summarizetts')
         .setDescription('Summarize last 20 chat in history')
         .toJSON(),
+     new SlashCommandBuilder()
+        .setName('promptchat')
+        .setDescription('Read last 50 chat and ask AI something about it')
+        .addStringOption(option =>
+            option
+                .setName('chatPrompt')
+                .setDescription('Ask anything about the last 50 chat messages')
+                .setRequired(true)
+        )
     // new SlashCommandBuilder()
     //     .setName('invite')
     //     .setDescription('Invite players via code')
