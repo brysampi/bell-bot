@@ -19,6 +19,10 @@ const commands = [
         .setName('summarize')
         .setDescription('Summarize last 20 chat in history')
         .toJSON(),
+    new SlashCommandBuilder()
+        .setName('summarizetts')
+        .setDescription('Summarize last 20 chat in history')
+        .toJSON(),
     // new SlashCommandBuilder()
     //     .setName('invite')
     //     .setDescription('Invite players via code')

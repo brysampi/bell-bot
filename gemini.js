@@ -69,14 +69,14 @@ async function summarizeChat(messages) {
     const chatHistory = messages.map(msg => {
         return `${msg.displayName || msg.username}: ${msg.content}`;
     }).join("\n");
-
+const pref_language = 'tagalog'
     const prompt = `You're a friendly Discord community assistant.
     Your job is to read the recent chat messages and explain what's been happening in a natural, easy-to-understand way and make it short.
 
 Imagine someone has been away from the server and wants to catch up on the conversation. Explain it to them like a friend would.
 
 What to include:
-Watch the language using in the chat use the same language as much as possible if not use english.
+Watch the language using in the chat use the same language and as much as possible id like it `+pref_language+` if not use english.
 Match the tone of the conversation. If it was casual, keep your summary casual. If it was serious, keep it serious .
 Main discussions: Mention the topics that came up and what people said about them.
 Important details: Highlight anything worth knowing, such as announcements, plans, news, or interesting information.

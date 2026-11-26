@@ -63,7 +63,13 @@ function getGuildQueue(guildId, connection) {
             setupVoiceConnectionListeners(connection, guildId);
         }
 
-        const queueData = { queue: [], player: player, currentFile: null, voiceConnection: connection };
+        const queueData = {
+            queue: [],
+            player: player,
+            currentFile: null,
+            voiceConnection: connection,
+            disconnectWhenIdle: false
+        };
 
         player.on(AudioPlayerStatus.Idle, () => {
             const lastFile = queueData.currentFile;
@@ -91,7 +97,25 @@ function getGuildQueue(guildId, connection) {
 
 async function playNext(guildId) {
     const queueData = audioQueues.get(guildId);
-    if (!queueData || queueData.queue.length === 0 || queueData.player.state.status !== AudioPlayerStatus.Idle) return;
+    if (!queueData || queueData.player.state.status !== AudioPlayerStatus.Idle) return;
+
+    if (queueData.queue.length === 0) {
+        if (queueData.disconnectWhenIdle) {
+            queueData.disconnectWhenIdle = false;
+            if (queueData.voiceConnection
+                && queueData.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed) {
+                try {
+                    queueData.voiceConnection.destroy();
+                } catch (error) {
+                    queueData.disconnectWhenIdle = true;
+                    console.error(`Failed to disconnect voice connection in guild ${guildId}:`, error);
+                    return;
+                }
+            }
+            audioQueues.delete(guildId);
+        }
+        return;
+    }
 
     const nextFile = queueData.queue.shift();
     queueData.currentFile = nextFile;
@@ -189,7 +213,7 @@ client.on('messageCreate', async (message) => {
     if (message.content.startsWith('b!logs') && message.author.username === 'bell.v1') {
         const chatLogs = [...messages.values()]
             .reverse()
-            .filter(message => !message.author.bot && message.content.trim() !== 'b!logs'&& message.content.trim() !== 'b!log')
+            .filter(message => !message.author.bot && message.content.trim() !== 'b!logs' && message.content.trim() !== 'b!log')
             .map(message => ({
                 username: message.author.username,
                 displayName: message.author.displayName,
@@ -217,7 +241,7 @@ client.on('messageCreate', async (message) => {
         console.log(summary);
         message.reply(summary);
     }
-    
+
     // console.log(`[message] ${message.guild?.name || 'DM'} ${message.author.tag}: ${message.content}`);
 
     // if (message.content === 'porbs' ||
@@ -582,26 +606,109 @@ client.on('interactionCreate', async (interaction) => {
             }
         }
         if (interaction.commandName === 'summarize') {
-            try {
-                await interaction.deferReply();
-                const channel = interaction.channel;
-                const messages = await channel.messages.fetch({ limit: 50 });
-                const chatLogs = [...messages.values()]
-                    .reverse()
-                    .filter(message => !message.author.bot && message.content.trim() !== 'b!sums')
-                    .map(message => ({
-                        username: message.author.username,
-                        displayName: message.member ? message.member.displayName : message.author.username,
-                        content: message.content,
-                        timestamp: message.createdAt.toISOString()
-                    }));
+            if (interaction.user.username === 'bell.v1')
+                try {
+                    await interaction.deferReply();
+                    const channel = interaction.channel;
+                    const messages = await channel.messages.fetch({ limit: 50 });
+                    const chatLogs = [...messages.values()]
+                        .reverse()
+                        .filter(message => !message.author.bot && message.content.trim() !== 'b!sums')
+                        .map(message => ({
+                            username: message.author.username,
+                            displayName: message.member ? message.member.displayName : message.author.username,
+                            content: message.content,
+                            timestamp: message.createdAt.toISOString()
+                        }));
 
-                const summary = await summarizeChat(chatLogs);
-                // const summary = chatLogs.map(log => `[${log.username}] ${log.displayName}: ${log.content}`).join('\n');
-                console.log(summary);
-                await interaction.editReply({ content: summary,ephemeral: false });
-            } catch (error) {
-                console.error('Interaction error:', error);
+                    const summary = await summarizeChat(chatLogs);
+                    // const summary = chatLogs.map(log => `[${log.username}] ${log.displayName}: ${log.content}`).join('\n');
+                    console.log(summary);
+                    await interaction.editReply({ content: summary, ephemeral: false });
+                } catch (error) {
+                    console.error('Interaction error:', error);
+                }
+            else {
+                await interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: false });
+            }
+        }
+        if (interaction.commandName === 'summarizetts') {
+            if (interaction.user.username === 'bell.v1')
+                try {
+                    await interaction.deferReply();
+
+                    if (!interaction.guild || !interaction.guild.voiceAdapterCreator) {
+                        await interaction.editReply({ content: 'This command can only be used in a server.' });
+                        return;
+                    }
+
+                    // ensure member context exists
+                    if (!interaction.member) {
+                        await interaction.editReply({ content: 'Could not get member information.' });
+                        return;
+                    }
+
+                    const voiceChannel = interaction.member.voice.channel;
+                    if (!voiceChannel) {
+                        await interaction.editReply({ content: 'Join a voice channel first!' });
+                        return;
+                    }
+
+                    // Prevent joining if already in a different voice channel in this server
+                    const botVoiceChannelId = interaction.guild.members.me?.voice.channelId;
+                    if (botVoiceChannelId && botVoiceChannelId !== voiceChannel.id) {
+                        await interaction.editReply({ content: 'I am already in another voice channel on this server!' });
+                        return;
+                    }
+
+                    const channel = interaction.channel;
+                    const messages = await channel.messages.fetch({ limit: 50 });
+                    const chatLogs = [...messages.values()]
+                        .reverse()
+                        .filter(message => !message.author.bot && message.content.trim() !== 'b!sums')
+                        .map(message => ({
+                            username: message.author.username,
+                            displayName: message.member ? message.member.displayName : message.author.username,
+                            content: message.content,
+                            timestamp: message.createdAt.toISOString()
+                        }));
+
+
+
+
+
+                    const summary = await summarizeChat(chatLogs);
+                    console.log(summary);
+                    const filePath = await generateTTS(summary);
+                    const guildId = interaction.guild.id;
+                    const existingQueue = audioQueues.get(guildId);
+                    const connection = botVoiceChannelId === voiceChannel.id
+                        && existingQueue?.voiceConnection
+                        && existingQueue.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed
+                        ? existingQueue.voiceConnection
+                        : joinVoiceChannel({
+                            channelId: voiceChannel.id,
+                            guildId,
+                            adapterCreator: interaction.guild.voiceAdapterCreator
+                        });
+                    const queueData = getGuildQueue(guildId, connection);
+                    queueData.disconnectWhenIdle = true;
+                    await interaction.editReply({ content: `Summary audio queued in ${voiceChannel.name}.` });
+                    playAudio(connection, filePath, guildId);
+                    await interaction.editReply({ content: summary, ephemeral: false });
+
+                } catch (error) {
+                    console.error('Summarize TTS error:', error);
+                    try {
+                        if (interaction.deferred || interaction.replied) {
+                            await interaction.editReply({ content: 'Failed to summarize or play the audio.' });
+                        }
+                    } catch (replyError) {
+                        console.error('Failed to report summarize TTS error:', replyError);
+                    }
+                }
+            else {
+                await interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: false });
             }
         }
     } catch (error) {
